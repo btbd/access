@@ -7,7 +7,7 @@ BYTE GetInstructionLength(BYTE table[], PBYTE instruction) {
 
 BOOL SetJMP(PVOID dest, PVOID src, BYTE nops) {
 	DWORD protection = 0;
-	if (!VirtualProtect(src, JMP_SIZE, PAGE_EXECUTE_READWRITE, &protection)) {
+	if (!VirtualProtect(src, JMP_SIZE + nops, PAGE_EXECUTE_READWRITE, &protection)) {
 		return FALSE;
 	}
 
@@ -19,7 +19,7 @@ BOOL SetJMP(PVOID dest, PVOID src, BYTE nops) {
 		*((PBYTE)src + JMP_SIZE + i) = 0x90;
 	}
 
-	VirtualProtect(src, JMP_SIZE, protection, &protection);
+	VirtualProtect(src, JMP_SIZE + nops, protection, &protection);
 	return TRUE;
 }
 
