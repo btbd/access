@@ -245,6 +245,7 @@ NTSTATUS NTAPI NtQueryVirtualMemoryHook(HANDLE processHandle, PVOID baseAddress,
 	args.MemoryInformationClass = memoryInformationClass;
 	args.MemoryInformation = memoryInformation;
 	args.MemoryInformationLength = memoryInformationLength;
+	args.ReturnLength = returnLength;
 	return DoSyscall(SyscallNtQueryVirtualMemory, &args);
 }
 
