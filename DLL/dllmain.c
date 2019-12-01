@@ -382,6 +382,7 @@ VOID Attach() {
 	HOOK(NtFreeVirtualMemory);
 	HOOK(NtLockVirtualMemory);
 	HOOK(NtUnlockVirtualMemory);
+	HOOK(NtProtectVirtualMemory);
 	HOOK(NtReadVirtualMemory);
 	HOOK(NtWriteVirtualMemory);
 	HOOK(NtQueryVirtualMemory);
