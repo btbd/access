@@ -6,13 +6,12 @@ extern NTSTATUS(NTAPI *PsResumeThread)(PETHREAD Thread, PULONG PreviousCount);
 /*** Process ***/
 INT64 CoreNtOpenProcess(PNTOPENPROCESS_ARGS args) {
 	CLIENT_ID clientId = { 0 };
-	try {
-		ProbeForRead(args->ClientId, sizeof(CLIENT_ID), sizeof(LONG));
-		clientId = *args->ClientId;
+	
+	if (!ProbeUserAddress(args->ClientId, sizeof(CLIENT_ID), sizeof(LONG)) || 
+		!SafeCopy(&clientId, args->ClientId, sizeof(clientId)) ||
+		!ProbeUserAddress(args->ProcessHandle, sizeof(HANDLE), sizeof(LONG))) {
 
-		ProbeForWrite(args->ProcessHandle, sizeof(HANDLE), sizeof(LONG));
-	} except (EXCEPTION_EXECUTE_HANDLER) {
-		return GetExceptionCode();
+		return STATUS_ACCESS_VIOLATION;
 	}
 
 	NTSTATUS status = STATUS_SUCCESS;
@@ -21,10 +20,9 @@ INT64 CoreNtOpenProcess(PNTOPENPROCESS_ARGS args) {
 		PEPROCESS process = 0;
 
 		if (NT_SUCCESS(status = PsLookupProcessThreadByCid(&clientId, &process, &thread))) {
-			try {	
-				*args->ProcessHandle = EncodeHandle(PsGetProcessId(process));
-			} except (EXCEPTION_EXECUTE_HANDLER) {
-				status = GetExceptionCode();
+			HANDLE processHandle = EncodeHandle(PsGetProcessId(process));
+			if (!SafeCopy(args->ProcessHandle, &processHandle, sizeof(processHandle))) {
+				status = STATUS_ACCESS_VIOLATION;
 			}
 			
 			ObDereferenceObject(thread);
@@ -34,10 +32,9 @@ INT64 CoreNtOpenProcess(PNTOPENPROCESS_ARGS args) {
 		PEPROCESS process = 0;
 
 		if (NT_SUCCESS(status = PsLookupProcessByProcessId(clientId.UniqueProcess, &process))) {
-			try {
-				*args->ProcessHandle = EncodeHandle(clientId.UniqueProcess);
-			} except (EXCEPTION_EXECUTE_HANDLER) {
-				status = GetExceptionCode();
+			HANDLE processHandle = EncodeHandle(clientId.UniqueProcess);
+			if (!SafeCopy(args->ProcessHandle, &processHandle, sizeof(processHandle))) {
+				status = STATUS_ACCESS_VIOLATION;
 			}
 
 			ObDereferenceObject(process);
@@ -74,16 +71,12 @@ INT64 CoreNtQuerySystemInformationEx(PNTQUERYSYSTEMINFORMATIONEX_ARGS args) {
 		case SystemSupportedProcessArchitectures:
 			if (args->InputBuffer && args->InputBufferLength == sizeof(HANDLE)) {
 				HANDLE processHandle = 0;
-				try {
-					ProbeForRead(args->InputBuffer, args->InputBufferLength, sizeof(LONG));
-					ProbeForWrite(args->SystemInformation, args->SystemInformationLength, sizeof(LONG));
-					if (args->ReturnLength) {
-						ProbeForWrite(args->ReturnLength, sizeof(ULONG), sizeof(LONG));
-					}
+				if (!ProbeUserAddress(args->InputBuffer, args->InputBufferLength, sizeof(LONG)) ||
+					!ProbeUserAddress(args->SystemInformation, args->SystemInformationLength, sizeof(LONG)) ||
+					(args->ReturnLength && !ProbeUserAddress(args->ReturnLength, sizeof(ULONG), sizeof(LONG))) ||
+					!SafeCopy(&processHandle, args->InputBuffer, sizeof(processHandle))) {
 
-					processHandle = *(PHANDLE)args->InputBuffer;
-				} except(EXCEPTION_EXECUTE_HANDLER) {
-					return GetExceptionCode();
+					return STATUS_ACCESS_VIOLATION;
 				}
 
 				PEPROCESS process = 0;
@@ -115,20 +108,16 @@ INT64 CoreNtQuerySystemInformationEx(PNTQUERYSYSTEMINFORMATIONEX_ARGS args) {
 					ObDereferenceObject(process);
 
 					if (systemInformation) {
-						try {
-							memcpy(args->SystemInformation, systemInformation, returnLength);
-						} except(EXCEPTION_EXECUTE_HANDLER) {
-							status = GetExceptionCode();
+						if (!SafeCopy(args->SystemInformation, systemInformation, returnLength)) {
+							status = STATUS_ACCESS_VIOLATION;
 						}
 
 						ExFreePool(systemInformation);
 					}
 
 					if (args->ReturnLength) {
-						try {
-							*args->ReturnLength = returnLength;
-						} except(EXCEPTION_EXECUTE_HANDLER) {
-							status = GetExceptionCode();
+						if (!SafeCopy(args->ReturnLength, &returnLength, sizeof(returnLength))) {
+							status = STATUS_ACCESS_VIOLATION;
 						}
 					}
 				}
@@ -144,18 +133,14 @@ INT64 CoreNtQuerySystemInformationEx(PNTQUERYSYSTEMINFORMATIONEX_ARGS args) {
 
 INT64 CoreNtQueryInformationProcess(PNTQUERYINFORMATIONPROCESS_ARGS args) {
 	if (args->ProcessInformation) {
-		try {
-			ProbeForWrite(args->ProcessInformation, args->ProcessInformationLength, sizeof(LONG));
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			return GetExceptionCode();
+		if (!ProbeUserAddress(args->ProcessInformation, args->ProcessInformationLength, sizeof(LONG))) {
+			return STATUS_ACCESS_VIOLATION;
 		}
 	}
 
 	if (args->ReturnLength) {
-		try {
-			ProbeForWrite(args->ReturnLength, sizeof(ULONG), sizeof(LONG));
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			return GetExceptionCode();
+		if (!ProbeUserAddress(args->ReturnLength, sizeof(ULONG), sizeof(LONG))) {
+			return STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -186,32 +171,28 @@ INT64 CoreNtQueryInformationProcess(PNTQUERYINFORMATIONPROCESS_ARGS args) {
 		ObDereferenceObject(process);
 
 		if (processInformation) {
-			try {
-				memcpy(args->ProcessInformation, processInformation, returnLength);
+			// Adjust relative pointers
+			if (returnLength >= sizeof(PVOID)) {
+				for (ULONG i = 0; i <= returnLength - sizeof(PVOID); i += sizeof(ULONG)) {
+					PVOID *ptr = (PVOID *)((PBYTE)processInformation + i);
+					SIZE_T offset = (PBYTE)*ptr - (PBYTE)processInformation;
 
-				// Adjust relative pointers
-				if (returnLength >= sizeof(PVOID)) {
-					for (ULONG i = 0; i <= returnLength - sizeof(PVOID); i += sizeof(ULONG)) {
-						PVOID *ptr = (PVOID *)((PBYTE)args->ProcessInformation + i);
-						SIZE_T offset = (PBYTE)*ptr - (PBYTE)processInformation;
-
-						if (offset < returnLength) {
-							*ptr = (PBYTE)args->ProcessInformation + offset;
-						}
+					if (offset < returnLength) {
+						*ptr = (PBYTE)args->ProcessInformation + offset;
 					}
 				}
-			} except(EXCEPTION_EXECUTE_HANDLER) {
-				status = GetExceptionCode();
+			}
+
+			if (!SafeCopy(args->ProcessInformation, processInformation, returnLength)) {
+				status = STATUS_ACCESS_VIOLATION;
 			}
 
 			ExFreePool(processInformation);
 		}
 
 		if (args->ReturnLength) {
-			try {
-				*args->ReturnLength = returnLength;
-			} except(EXCEPTION_EXECUTE_HANDLER) {
-				status = GetExceptionCode();
+			if (!SafeCopy(args->ReturnLength, &returnLength, sizeof(returnLength))) {
+				status = STATUS_ACCESS_VIOLATION;
 			}
 		}
 	}
@@ -224,10 +205,8 @@ INT64 CoreNtSetInformationProcess(PNTSETINFORMATIONPROCESS_ARGS args) {
 		return STATUS_INVALID_PARAMETER;
 	}
 
-	try {
-		ProbeForRead(args->ProcessInformation, args->ProcessInformationLength, sizeof(BYTE));
-	} except(EXCEPTION_EXECUTE_HANDLER) {
-		return GetExceptionCode();
+	if (!ProbeUserAddress(args->ProcessInformation, args->ProcessInformationLength, sizeof(BYTE))) {
+		return STATUS_ACCESS_VIOLATION;
 	}
 	
 	PEPROCESS process = 0;
@@ -235,10 +214,8 @@ INT64 CoreNtSetInformationProcess(PNTSETINFORMATIONPROCESS_ARGS args) {
 	if (NT_SUCCESS(status)) {
 		PVOID processInformation = ExAllocatePool(NonPagedPool, args->ProcessInformationLength);
 		if (processInformation) {
-			try {
-				memcpy(processInformation, args->ProcessInformation, args->ProcessInformationLength);
-			} except(EXCEPTION_EXECUTE_HANDLER) {
-				status = GetExceptionCode();
+			if (!SafeCopy(processInformation, args->ProcessInformation, args->ProcessInformationLength)) {
+				status = STATUS_ACCESS_VIOLATION;
 			}
 
 			if (NT_SUCCESS(status)) {
@@ -288,14 +265,13 @@ INT64 CoreNtFlushInstructionCache(PNTFLUSHINSTRUCTIONCACHE_ARGS args) {
 INT64 CoreNtAllocateVirtualMemory(PNTALLOCATEVIRTUALMEMORY_ARGS args) {
 	PVOID baseAddress = 0;
 	SIZE_T regionSize = 0;
-	try {
-		ProbeForWrite(args->BaseAddress, sizeof(PVOID), sizeof(LONG));
-		ProbeForWrite(args->RegionSize, sizeof(SIZE_T), sizeof(LONG));
 
-		baseAddress = *args->BaseAddress;
-		regionSize = *args->RegionSize;
-	} except(EXCEPTION_EXECUTE_HANDLER) {
-		return GetExceptionCode();
+	if (!ProbeUserAddress(args->BaseAddress, sizeof(PVOID), sizeof(LONG)) ||
+		!ProbeUserAddress(args->RegionSize, sizeof(SIZE_T), sizeof(LONG)) ||
+		!SafeCopy(&baseAddress, args->BaseAddress, sizeof(baseAddress)) ||
+		!SafeCopy(&regionSize, args->RegionSize, sizeof(regionSize))) {
+
+		return STATUS_ACCESS_VIOLATION;
 	}
 
 	PEPROCESS process = 0;
@@ -313,11 +289,10 @@ INT64 CoreNtAllocateVirtualMemory(PNTALLOCATEVIRTUALMEMORY_ARGS args) {
 
 		ObDereferenceObject(process);
 
-		try {
-			*args->BaseAddress = baseAddress;
-			*args->RegionSize = regionSize;
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			status = GetExceptionCode();
+		if (!SafeCopy(args->BaseAddress, &baseAddress, sizeof(baseAddress)) ||
+			!SafeCopy(args->RegionSize, &regionSize, sizeof(regionSize))) {
+
+			status = STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -328,16 +303,14 @@ INT64 CoreNtFlushVirtualMemory(PNTFLUSHVIRTUALMEMORY_ARGS args) {
 	PVOID baseAddress = 0;
 	SIZE_T regionSize = 0;
 	IO_STATUS_BLOCK ioStatus = { 0 };
-	try {
-		ProbeForWrite(args->BaseAddress, sizeof(PVOID), sizeof(LONG));
-		ProbeForWrite(args->RegionSize, sizeof(SIZE_T), sizeof(LONG));
-		ProbeForWrite(args->IoStatus, sizeof(IO_STATUS_BLOCK), sizeof(LONG));
+	if (!ProbeUserAddress(args->BaseAddress, sizeof(PVOID), sizeof(LONG)) ||
+		!ProbeUserAddress(args->RegionSize, sizeof(SIZE_T), sizeof(LONG)) ||
+		!ProbeUserAddress(args->IoStatus, sizeof(IO_STATUS_BLOCK), sizeof(LONG)) ||
+		!SafeCopy(&baseAddress, args->BaseAddress, sizeof(baseAddress)) ||
+		!SafeCopy(&regionSize, args->RegionSize, sizeof(regionSize)) ||
+		!SafeCopy(&ioStatus, args->IoStatus, sizeof(ioStatus))) {
 
-		baseAddress = *args->BaseAddress;
-		regionSize = *args->RegionSize;
-		ioStatus = *args->IoStatus;
-	} except(EXCEPTION_EXECUTE_HANDLER) {
-		return GetExceptionCode();
+		return STATUS_ACCESS_VIOLATION;
 	}
 
 	PEPROCESS process = 0;
@@ -355,12 +328,11 @@ INT64 CoreNtFlushVirtualMemory(PNTFLUSHVIRTUALMEMORY_ARGS args) {
 
 		ObDereferenceObject(process);
 
-		try {
-			*args->BaseAddress = baseAddress;
-			*args->RegionSize = regionSize;
-			*args->IoStatus = ioStatus;
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			status = GetExceptionCode();
+		if (!SafeCopy(args->BaseAddress, &baseAddress, sizeof(baseAddress)) ||
+			!SafeCopy(args->RegionSize, &regionSize, sizeof(regionSize)) ||
+			!SafeCopy(args->IoStatus, &ioStatus, sizeof(ioStatus))) {
+
+			status = STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -370,14 +342,12 @@ INT64 CoreNtFlushVirtualMemory(PNTFLUSHVIRTUALMEMORY_ARGS args) {
 INT64 CoreNtFreeVirtualMemory(PNTFREEVIRTUALMEMORY_ARGS args) {
 	PVOID baseAddress = 0;
 	SIZE_T regionSize = 0;
-	try {
-		ProbeForWrite(args->BaseAddress, sizeof(PVOID), sizeof(LONG));
-		ProbeForWrite(args->RegionSize, sizeof(SIZE_T), sizeof(LONG));
+	if (!ProbeUserAddress(args->BaseAddress, sizeof(PVOID), sizeof(LONG)) ||
+		!ProbeUserAddress(args->RegionSize, sizeof(SIZE_T), sizeof(LONG)) ||
+		!SafeCopy(&baseAddress, args->BaseAddress, sizeof(baseAddress)) ||
+		!SafeCopy(&regionSize, args->RegionSize, sizeof(regionSize))) {
 
-		baseAddress = *args->BaseAddress;
-		regionSize = *args->RegionSize;
-	} except(EXCEPTION_EXECUTE_HANDLER) {
-		return GetExceptionCode();
+		return STATUS_ACCESS_VIOLATION;
 	}
 
 	PEPROCESS process = 0;
@@ -395,11 +365,10 @@ INT64 CoreNtFreeVirtualMemory(PNTFREEVIRTUALMEMORY_ARGS args) {
 
 		ObDereferenceObject(process);
 
-		try {
-			*args->BaseAddress = baseAddress;
-			*args->RegionSize = regionSize;
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			status = GetExceptionCode();
+		if (!SafeCopy(args->BaseAddress, &baseAddress, sizeof(baseAddress)) ||
+			!SafeCopy(args->RegionSize, &regionSize, sizeof(regionSize))) {
+
+			status = STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -409,14 +378,12 @@ INT64 CoreNtFreeVirtualMemory(PNTFREEVIRTUALMEMORY_ARGS args) {
 INT64 CoreNtLockVirtualMemory(PNTLOCKVIRTUALMEMORY_ARGS args) {
 	PVOID baseAddress = 0;
 	SIZE_T regionSize = 0;
-	try {
-		ProbeForWrite(args->BaseAddress, sizeof(PVOID), sizeof(LONG));
-		ProbeForWrite(args->RegionSize, sizeof(SIZE_T), sizeof(LONG));
+	if (!ProbeUserAddress(args->BaseAddress, sizeof(PVOID), sizeof(LONG)) ||
+		!ProbeUserAddress(args->RegionSize, sizeof(SIZE_T), sizeof(LONG)) ||
+		!SafeCopy(&baseAddress, args->BaseAddress, sizeof(baseAddress)) ||
+		!SafeCopy(&regionSize, args->RegionSize, sizeof(regionSize))) {
 
-		baseAddress = *args->BaseAddress;
-		regionSize = *args->RegionSize;
-	} except(EXCEPTION_EXECUTE_HANDLER) {
-		return GetExceptionCode();
+		return STATUS_ACCESS_VIOLATION;
 	}
 
 	PEPROCESS process = 0;
@@ -434,11 +401,10 @@ INT64 CoreNtLockVirtualMemory(PNTLOCKVIRTUALMEMORY_ARGS args) {
 
 		ObDereferenceObject(process);
 
-		try {
-			*args->BaseAddress = baseAddress;
-			*args->RegionSize = regionSize;
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			status = GetExceptionCode();
+		if (!SafeCopy(args->BaseAddress, &baseAddress, sizeof(baseAddress)) ||
+			!SafeCopy(args->RegionSize, &regionSize, sizeof(regionSize))) {
+
+			status = STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -448,14 +414,12 @@ INT64 CoreNtLockVirtualMemory(PNTLOCKVIRTUALMEMORY_ARGS args) {
 INT64 CoreNtUnlockVirtualMemory(PNTUNLOCKVIRTUALMEMORY_ARGS args) {
 	PVOID baseAddress = 0;
 	SIZE_T regionSize = 0;
-	try {
-		ProbeForWrite(args->BaseAddress, sizeof(PVOID), sizeof(LONG));
-		ProbeForWrite(args->RegionSize, sizeof(SIZE_T), sizeof(LONG));
+	if (!ProbeUserAddress(args->BaseAddress, sizeof(PVOID), sizeof(LONG)) ||
+		!ProbeUserAddress(args->RegionSize, sizeof(SIZE_T), sizeof(LONG)) ||
+		!SafeCopy(&baseAddress, args->BaseAddress, sizeof(baseAddress)) ||
+		!SafeCopy(&regionSize, args->RegionSize, sizeof(regionSize))) {
 
-		baseAddress = *args->BaseAddress;
-		regionSize = *args->RegionSize;
-	} except(EXCEPTION_EXECUTE_HANDLER) {
-		return GetExceptionCode();
+		return STATUS_ACCESS_VIOLATION;
 	}
 
 	PEPROCESS process = 0;
@@ -464,20 +428,19 @@ INT64 CoreNtUnlockVirtualMemory(PNTUNLOCKVIRTUALMEMORY_ARGS args) {
 		KeAttachProcess((PKPROCESS)process);
 		KeEnterCriticalRegion();
 		KPROCESSOR_MODE previousMode = KeSetPreviousMode(KernelMode);
-		
+
 		status = ZwUnlockVirtualMemory(NtCurrentProcess(), &baseAddress, &regionSize, args->LockOption);
-		
+
 		KeSetPreviousMode(previousMode);
 		KeLeaveCriticalRegion();
 		KeDetachProcess();
 
 		ObDereferenceObject(process);
 
-		try {
-			*args->BaseAddress = baseAddress;
-			*args->RegionSize = regionSize;
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			status = GetExceptionCode();
+		if (!SafeCopy(args->BaseAddress, &baseAddress, sizeof(baseAddress)) ||
+			!SafeCopy(args->RegionSize, &regionSize, sizeof(regionSize))) {
+
+			status = STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -487,16 +450,15 @@ INT64 CoreNtUnlockVirtualMemory(PNTUNLOCKVIRTUALMEMORY_ARGS args) {
 INT64 CoreNtProtectVirtualMemory(PNTPROTECTVIRTUALMEMORY_ARGS args) {
 	PVOID baseAddress = 0;
 	SIZE_T regionSize = 0;
-	try {
-		ProbeForWrite(args->BaseAddress, sizeof(PVOID), sizeof(LONG));
-		ProbeForWrite(args->RegionSize, sizeof(SIZE_T), sizeof(LONG));
-		ProbeForWrite(args->OldAccessProtection, sizeof(ULONG), sizeof(LONG));
+	if (!ProbeUserAddress(args->BaseAddress, sizeof(PVOID), sizeof(LONG)) ||
+		!ProbeUserAddress(args->RegionSize, sizeof(SIZE_T), sizeof(LONG)) ||
+		!ProbeUserAddress(args->OldAccessProtection, sizeof(ULONG), sizeof(LONG)) ||
+		!SafeCopy(&baseAddress, args->BaseAddress, sizeof(baseAddress)) ||
+		!SafeCopy(&regionSize, args->RegionSize, sizeof(regionSize))) {
 
-		baseAddress = *args->BaseAddress;
-		regionSize = *args->RegionSize;
-	} except(EXCEPTION_EXECUTE_HANDLER) {
-		return GetExceptionCode();
+		return STATUS_ACCESS_VIOLATION;
 	}
+
 
 	PEPROCESS process = 0;
 	NTSTATUS status = PsLookupProcessByProcessId(DecodeHandle(args->ProcessHandle), &process);
@@ -515,12 +477,11 @@ INT64 CoreNtProtectVirtualMemory(PNTPROTECTVIRTUALMEMORY_ARGS args) {
 
 		ObDereferenceObject(process);
 
-		try {
-			*args->BaseAddress = baseAddress;
-			*args->RegionSize = regionSize;
-			*args->OldAccessProtection = oldAccessProtection;
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			status = GetExceptionCode();
+		if (!SafeCopy(args->BaseAddress, &baseAddress, sizeof(baseAddress)) || 
+			!SafeCopy(args->RegionSize, &regionSize, sizeof(regionSize)) || 
+			!SafeCopy(args->OldAccessProtection, &oldAccessProtection, sizeof(oldAccessProtection))) {
+
+			status = STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -537,10 +498,8 @@ INT64 CoreNtReadVirtualMemory(PNTREADVIRTUALMEMORY_ARGS args) {
 	}
 
 	if (args->NumberOfBytesRead) {
-		try {
-			ProbeForWrite(args->NumberOfBytesRead, sizeof(SIZE_T), sizeof(LONG));
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			return GetExceptionCode();
+		if (!ProbeUserAddress(args->NumberOfBytesRead, sizeof(SIZE_T), sizeof(LONG))) {
+			return STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -552,10 +511,8 @@ INT64 CoreNtReadVirtualMemory(PNTREADVIRTUALMEMORY_ARGS args) {
 			status = MmCopyVirtualMemory(process, args->BaseAddress, PsGetCurrentProcess(), args->Buffer, args->NumberOfBytesToRead, ExGetPreviousMode(), &numberOfBytesRead);
 
 			if (args->NumberOfBytesRead) {
-				try {
-					*args->NumberOfBytesRead = numberOfBytesRead;
-				} except(EXCEPTION_EXECUTE_HANDLER) {
-					status = GetExceptionCode();
+				if (!SafeCopy(args->NumberOfBytesRead, &numberOfBytesRead, sizeof(numberOfBytesRead))) {
+					status = STATUS_ACCESS_VIOLATION;
 				}
 			}
 		}
@@ -576,10 +533,8 @@ INT64 CoreNtWriteVirtualMemory(PNTWRITEVIRTUALMEMORY_ARGS args) {
 	}
 
 	if (args->NumberOfBytesWritten) {
-		try {
-			ProbeForWrite(args->NumberOfBytesWritten, sizeof(SIZE_T), sizeof(LONG));
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			return GetExceptionCode();
+		if (!ProbeUserAddress(args->NumberOfBytesWritten, sizeof(SIZE_T), sizeof(LONG))) {
+			return STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -591,10 +546,8 @@ INT64 CoreNtWriteVirtualMemory(PNTWRITEVIRTUALMEMORY_ARGS args) {
 			status = MmCopyVirtualMemory(PsGetCurrentProcess(), args->Buffer, process, args->BaseAddress, args->NumberOfBytesToWrite, ExGetPreviousMode(), &numberOfBytesWritten);
 
 			if (args->NumberOfBytesWritten) {
-				try {
-					*args->NumberOfBytesWritten = numberOfBytesWritten;
-				} except(EXCEPTION_EXECUTE_HANDLER) {
-					status = GetExceptionCode();
+				if (!SafeCopy(args->NumberOfBytesWritten, &numberOfBytesWritten, sizeof(numberOfBytesWritten))) {
+					status = STATUS_ACCESS_VIOLATION;
 				}
 			}
 		}
@@ -607,18 +560,14 @@ INT64 CoreNtWriteVirtualMemory(PNTWRITEVIRTUALMEMORY_ARGS args) {
 
 INT64 CoreNtQueryVirtualMemory(PNTQUERYVIRTUALMEMORY_ARGS args) {
 	if (args->MemoryInformation) {
-		try {
-			ProbeForWrite(args->MemoryInformation, args->MemoryInformationLength, sizeof(LONG));
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			return GetExceptionCode();
+		if (!ProbeUserAddress(args->MemoryInformation, args->MemoryInformationLength, sizeof(LONG))) {
+			return STATUS_ACCESS_VIOLATION;
 		}
 	}
 
 	if (args->ReturnLength) {
-		try {
-			ProbeForWrite(args->ReturnLength, sizeof(SIZE_T), sizeof(LONG));
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			return GetExceptionCode();
+		if (!ProbeUserAddress(args->ReturnLength, sizeof(SIZE_T), sizeof(LONG))) {
+			return STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -649,20 +598,16 @@ INT64 CoreNtQueryVirtualMemory(PNTQUERYVIRTUALMEMORY_ARGS args) {
 		ObDereferenceObject(process);
 
 		if (memoryInformation) {
-			try {
-				memcpy(args->MemoryInformation, memoryInformation, returnLength);
-			} except(EXCEPTION_EXECUTE_HANDLER) {
-				status = GetExceptionCode();
+			if (!SafeCopy(args->MemoryInformation, memoryInformation, returnLength)) {
+				status = STATUS_ACCESS_VIOLATION;
 			}
 
 			ExFreePool(memoryInformation);
 		}
 
 		if (args->ReturnLength) {
-			try {
-				*args->ReturnLength = returnLength;
-			} except(EXCEPTION_EXECUTE_HANDLER) {
-				status = GetExceptionCode();
+			if (!SafeCopy(args->ReturnLength, &returnLength, sizeof(returnLength))) {
+				status = STATUS_ACCESS_VIOLATION;
 			}
 		}
 	}
@@ -673,13 +618,11 @@ INT64 CoreNtQueryVirtualMemory(PNTQUERYVIRTUALMEMORY_ARGS args) {
 /*** Thread ***/
 INT64 CoreNtOpenThread(PNTOPENTHREAD_ARGS args) {
 	CLIENT_ID clientId = { 0 };
-	try {
-		ProbeForRead(args->ClientId, sizeof(CLIENT_ID), sizeof(LONG));
-		ProbeForWrite(args->ThreadHandle, sizeof(HANDLE), sizeof(LONG));
+	if (!ProbeUserAddress(args->ClientId, sizeof(CLIENT_ID), sizeof(LONG)) ||
+		!ProbeUserAddress(args->ThreadHandle, sizeof(HANDLE), sizeof(LONG)) ||
+		!SafeCopy(&clientId, args->ClientId, sizeof(clientId))) {
 
-		clientId = *args->ClientId;
-	} except(EXCEPTION_EXECUTE_HANDLER) {
-		return GetExceptionCode();
+		return STATUS_ACCESS_VIOLATION;
 	}
 	
 	NTSTATUS status = STATUS_SUCCESS;
@@ -688,10 +631,9 @@ INT64 CoreNtOpenThread(PNTOPENTHREAD_ARGS args) {
 		PEPROCESS process = 0;
 
 		if (NT_SUCCESS(status = PsLookupProcessThreadByCid(&clientId, &process, &thread))) {
-			try {
-				*args->ThreadHandle = EncodeHandle(PsGetThreadId(thread));
-			} except(EXCEPTION_EXECUTE_HANDLER) {
-				status = GetExceptionCode();
+			HANDLE threadHandle = EncodeHandle(PsGetThreadId(thread));
+			if (!SafeCopy(args->ThreadHandle, &threadHandle, sizeof(threadHandle))) {
+				status = STATUS_ACCESS_VIOLATION;
 			}
 
 			ObDereferenceObject(thread);
@@ -701,10 +643,9 @@ INT64 CoreNtOpenThread(PNTOPENTHREAD_ARGS args) {
 		PETHREAD thread = 0;
 
 		if (NT_SUCCESS(status = PsLookupThreadByThreadId(clientId.UniqueThread, &thread))) {
-			try {
-				*args->ThreadHandle = EncodeHandle(clientId.UniqueThread);
-			} except(EXCEPTION_EXECUTE_HANDLER) {
-				status = GetExceptionCode();
+			HANDLE threadHandle = EncodeHandle(clientId.UniqueThread);
+			if (!SafeCopy(args->ThreadHandle, &threadHandle, sizeof(threadHandle))) {
+				status = STATUS_ACCESS_VIOLATION;
 			}
 
 			ObDereferenceObject(thread);
@@ -716,18 +657,14 @@ INT64 CoreNtOpenThread(PNTOPENTHREAD_ARGS args) {
 
 INT64 CoreNtQueryInformationThread(PNTQUERYINFORMATIONTHREAD_ARGS args) {
 	if (args->ThreadInformation) {
-		try {
-			ProbeForWrite(args->ThreadInformation, args->ThreadInformationLength, sizeof(LONG));
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			return GetExceptionCode();
+		if (!ProbeUserAddress(args->ThreadInformation, args->ThreadInformationLength, sizeof(LONG))) {
+			return STATUS_ACCESS_VIOLATION;
 		}
 	}
 
 	if (args->ReturnLength) {
-		try {
-			ProbeForWrite(args->ReturnLength, sizeof(ULONG), sizeof(LONG));
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			return GetExceptionCode();
+		if (!ProbeUserAddress(args->ReturnLength, sizeof(ULONG), sizeof(LONG))) {
+			return STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -752,10 +689,9 @@ INT64 CoreNtQueryInformationThread(PNTQUERYINFORMATIONTHREAD_ARGS args) {
 
 		// Manually copy TEB if requested
 		if (NT_SUCCESS(status) && args->ThreadInformationClass == ThreadBasicInformation && args->ThreadInformation && args->ThreadInformationLength) {
-			try {
-				((PTHREAD_BASIC_INFORMATION)args->ThreadInformation)->TebBaseAddress = PsGetThreadTeb(thread);
-			} except(EXCEPTION_EXECUTE_HANDLER) {
-				status = GetExceptionCode();
+			PVOID tebBaseAddress = PsGetThreadTeb(thread);
+			if (!SafeCopy(&((PTHREAD_BASIC_INFORMATION)args->ThreadInformation)->TebBaseAddress, &tebBaseAddress, sizeof(tebBaseAddress))) {
+				status = STATUS_ACCESS_VIOLATION;
 			}
 		}
 
@@ -775,10 +711,8 @@ INT64 CoreNtQueryInformationThread(PNTQUERYINFORMATIONTHREAD_ARGS args) {
 
 INT64 CoreNtSetInformationThread(PNTSETINFORMATIONTHREAD_ARGS args) {
 	if (args->ThreadInformation && args->ThreadInformationLength) {
-		try {
-			ProbeForRead(args->ThreadInformation, args->ThreadInformationLength, sizeof(BYTE));
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			return GetExceptionCode();
+		if (!ProbeUserAddress(args->ThreadInformation, args->ThreadInformationLength, sizeof(BYTE))) {
+			return STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -804,10 +738,8 @@ INT64 CoreNtSetInformationThread(PNTSETINFORMATIONTHREAD_ARGS args) {
 				}
 
 				ULONG idealProcessor = 0;
-				try {
-					idealProcessor = *(PULONG)args->ThreadInformation;
-				} except(EXCEPTION_EXECUTE_HANDLER) {
-					status = GetExceptionCode();
+				if (!SafeCopy(&idealProcessor, args->ThreadInformation, sizeof(idealProcessor))) {
+					status = STATUS_ACCESS_VIOLATION;
 					break;
 				}
 
@@ -878,10 +810,8 @@ INT64 CoreNtSetContextThread(PNTSETCONTEXTTHREAD_ARGS args) {
 
 INT64 CoreNtResumeThread(PNTRESUMETHREAD_ARGS args) {
 	if (args->SuspendCount) {
-		try {
-			ProbeForWrite(args->SuspendCount, sizeof(ULONG), sizeof(LONG));
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			return GetExceptionCode();
+		if (!ProbeUserAddress(args->SuspendCount, sizeof(ULONG), sizeof(LONG))) {
+			return STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -895,10 +825,8 @@ INT64 CoreNtResumeThread(PNTRESUMETHREAD_ARGS args) {
 		ObDereferenceObject(thread);
 
 		if (args->SuspendCount) {
-			try {
-				*args->SuspendCount = suspendCount;
-			} except(EXCEPTION_EXECUTE_HANDLER) {
-				status = GetExceptionCode();
+			if (!SafeCopy(args->SuspendCount, &suspendCount, sizeof(suspendCount))) {
+				status = STATUS_ACCESS_VIOLATION;
 			}
 		}
 	}
@@ -908,10 +836,8 @@ INT64 CoreNtResumeThread(PNTRESUMETHREAD_ARGS args) {
 
 INT64 CoreNtSuspendThread(PNTSUSPENDTHREAD_ARGS args) {
 	if (args->PreviousSuspendCount) {
-		try {
-			ProbeForWrite(args->PreviousSuspendCount, sizeof(ULONG), sizeof(LONG));
-		} except(EXCEPTION_EXECUTE_HANDLER) {
-			return GetExceptionCode();
+		if (!ProbeUserAddress(args->PreviousSuspendCount, sizeof(ULONG), sizeof(LONG))) {
+			return STATUS_ACCESS_VIOLATION;
 		}
 	}
 
@@ -925,10 +851,8 @@ INT64 CoreNtSuspendThread(PNTSUSPENDTHREAD_ARGS args) {
 		ObDereferenceObject(thread);
 
 		if (args->PreviousSuspendCount) {
-			try {
-				*args->PreviousSuspendCount = previousSuspendCount;
-			} except(EXCEPTION_EXECUTE_HANDLER) {
-				status = GetExceptionCode();
+			if (!SafeCopy(args->PreviousSuspendCount, &previousSuspendCount, sizeof(previousSuspendCount))) {
+				status = STATUS_ACCESS_VIOLATION;
 			}
 		}
 	}

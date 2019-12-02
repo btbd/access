@@ -1,5 +1,32 @@
 #include "stdafx.h"
 
+BOOL ProbeUserAddress(PVOID addr, SIZE_T size, ULONG alignment) {
+	if (size == 0) {
+		return TRUE;
+	}
+		
+	ULONG_PTR current = (ULONG_PTR)addr;
+	if (((ULONG_PTR)addr & (alignment - 1)) != 0) {
+		return FALSE;
+	}
+
+	ULONG_PTR last = current + size - 1;
+	if ((last < current) || (last >= MmUserProbeAddress)) {
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+BOOL SafeCopy(PVOID dest, PVOID src, SIZE_T size) {
+	SIZE_T returnSize = 0;
+	if (NT_SUCCESS(MmCopyVirtualMemory(PsGetCurrentProcess(), src, PsGetCurrentProcess(), dest, size, KernelMode, &returnSize)) && returnSize == size) {
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
 BYTE GetInstructionLength(BYTE table[], PBYTE instruction) {
 	BYTE i = table[*instruction++];
 	return i < 0x10 ? i : GetInstructionLength(INSTRUCTION_TABLES[i - 0x10], instruction);

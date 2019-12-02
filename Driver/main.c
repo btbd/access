@@ -1,17 +1,21 @@
 #include "stdafx.h"
 
-PVOID DxgkGetSharedResourceAdapterLuid = 0;
-INT64(NTAPI *DxgkGetSharedResourceAdapterLuidOriginal)(INT64, INT64, PVOID);
+INT64(NTAPI *EnumerateDebuggingDevicesOriginal)(PVOID, PVOID);
 
 NTSTATUS(NTAPI *PsResumeThread)(PETHREAD Thread, PULONG PreviousCount);
 NTSTATUS(NTAPI *PsSuspendThread)(PETHREAD Thread, PULONG PreviousSuspendCount);
 
-INT64 NTAPI DxgkGetSharedResourceAdapterLuidHook(INT64 unique, INT64 syscall, PVOID buffer) {
-	if (ExGetPreviousMode() != UserMode || unique != SYSCALL_UNIQUE) {
-		return DxgkGetSharedResourceAdapterLuidOriginal(unique, syscall, buffer);
+INT64 NTAPI EnumerateDebuggingDevicesHook(PSYSCALL_DATA data, PINT64 status) {
+	if (ExGetPreviousMode() != UserMode) {
+		return EnumerateDebuggingDevicesOriginal(data, status);
 	}
 
-	switch (syscall) {
+	SYSCALL_DATA safeData = { 0 };
+	if (!ProbeUserAddress(data, sizeof(safeData), sizeof(ULONG)) || !SafeCopy(&safeData, data, sizeof(safeData)) || safeData.Unique != SYSCALL_UNIQUE) {
+		return EnumerateDebuggingDevicesOriginal(data, status);
+	}
+
+	switch (safeData.Syscall) {
 		/*** Process ***/
 		HANDLE_SYSCALL(NtOpenProcess, NTOPENPROCESS_ARGS)
 		HANDLE_SYSCALL(NtSuspendProcess, NTSUSPENDPROCESS_ARGS)
@@ -45,7 +49,8 @@ INT64 NTAPI DxgkGetSharedResourceAdapterLuidHook(INT64 unique, INT64 syscall, PV
 		HANDLE_SYSCALL(NtWaitForSingleObject, NTWAITFORSINGLEOBJECT_ARGS)
 	}
 
-	return STATUS_NOT_IMPLEMENTED;
+	*status = STATUS_NOT_IMPLEMENTED;
+	return 0;
 }
 
 ULONG PreviousModeOffset = 0;
@@ -80,47 +85,29 @@ NTSTATUS Main() {
 
 	*(PVOID *)&PsSuspendThread = (PBYTE)func + *(PINT)((PBYTE)func + 3) + 7;
 
-	// Hook dxgkrnl syscall
-	PVOID base = GetBaseAddress("dxgkrnl.sys", 0);
+	// Hook ntoskrnl syscall
+	PVOID base = GetBaseAddress("ntoskrnl.exe", 0);
 	if (!base) {
-		printf("! failed to get \"dxgkrnl.sys\" base !\n");
+		printf("! failed to get \"ntoskrnl.exe\" base !\n");
 		return STATUS_FAILED_DRIVER_ENTRY;
 	}
 
-	func = RtlFindExportedRoutineByName(base, "DxgkGetSharedResourceAdapterLuid");
+	func = FindPatternImage(base, "\x48\x8B\x05\x00\x00\x00\x00\x75\x07\x48\x8B\x05\x00\x00\x00\x00\xE8\x00\x00\x00\x00", "xxx????xxxxx????x????");
 	if (!func) {
-		// Not exported below 1903
-		func = FindPatternImage(base, "\x48\x8D\x15\x00\x00\x00\x00\xE8\x00\x00\x00\x00\xB8\x00\x00\x00\x00\x48\x83\xC4\x00\xC3", "xxx????x????x????xxx?x");
-		if (func) {
-			func = FindPattern(func, 0x100, "\x48\x8B\xC4", "xxx");
-		}
-
-		if (!func) {
-			printf("! failed to find \"DxgkGetSharedResourceAdapterLuid\" !\n");
-			return STATUS_FAILED_DRIVER_ENTRY;
-		}
-	}
-
-	if (!TrampolineHook((PVOID)DxgkGetSharedResourceAdapterLuidHook, func, (PVOID *)&DxgkGetSharedResourceAdapterLuidOriginal)) {
-		printf("! failed to hook \"DxgkGetSharedResourceAdapterLuid\" !\n");
+		printf("! failed to find xKdEnumerateDebuggingDevices !\n");
 		return STATUS_FAILED_DRIVER_ENTRY;
 	}
 
-	DxgkGetSharedResourceAdapterLuid = func;
+	func = (PBYTE)func + *(PINT)((PBYTE)func + 3) + 7;
+	*(PVOID *)&EnumerateDebuggingDevicesOriginal = InterlockedExchangePointer(func, (PVOID)EnumerateDebuggingDevicesHook);
 
 	printf("success\n");
 	return STATUS_SUCCESS;
 }
 
-VOID DriverUnload(PDRIVER_OBJECT driver) {
-	UNREFERENCED_PARAMETER(driver);
-
-	UnTrampolineHook(DxgkGetSharedResourceAdapterLuid, (PVOID)DxgkGetSharedResourceAdapterLuidOriginal);
-}
-
 NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
+	UNREFERENCED_PARAMETER(driver);
 	UNREFERENCED_PARAMETER(registryPath);
-	driver->DriverUnload = DriverUnload;
 
 	return Main();
 }

@@ -1,21 +1,17 @@
 #include "stdafx.h"
 
-PVOID(NTAPI *NtGdiDdDDIGetSharedResourceAdapterLuid)(PVOID unique, PVOID syscall, PVOID buffer);
+PVOID(NTAPI *NtConvertBetweenAuxiliaryCounterAndPerformanceCounter)(PVOID, PVOID, PVOID, PVOID);
 
 BOOL SetupSyscalls() {
-	HANDLE module = LoadLibrary(L"win32u.dll");
+	HANDLE module = LoadLibrary(L"ntdll.dll");
 	if (!module) {
-		module = LoadLibrary(L"gdi32full.dll");
-
-		if (!module) {
-			MessageBox(0, L"Failed to load a valid GDI module", L"Failure", MB_ICONERROR);
-			return FALSE;
-		}
+		MessageBox(0, L"Failed to load NTDLL", L"Failure", MB_ICONERROR);
+		return FALSE;
 	}
 
-	*(PVOID *)&NtGdiDdDDIGetSharedResourceAdapterLuid = GetProcAddress(module, "NtGdiDdDDIGetSharedResourceAdapterLuid");
-	if (!NtGdiDdDDIGetSharedResourceAdapterLuid) {
-		MessageBox(0, L"Failed to find \"NtGdiDdDDIGetSharedResourceAdapterLuid\"", L"Failure", MB_ICONERROR);
+	*(PVOID *)&NtConvertBetweenAuxiliaryCounterAndPerformanceCounter = GetProcAddress(module, "NtConvertBetweenAuxiliaryCounterAndPerformanceCounter");
+	if (!NtConvertBetweenAuxiliaryCounterAndPerformanceCounter) {
+		MessageBox(0, L"Failed to find \"NtConvertBetweenAuxiliaryCounterAndPerformanceCounter\"", L"Failure", MB_ICONERROR);
 		return FALSE;
 	}
 
@@ -23,5 +19,15 @@ BOOL SetupSyscalls() {
 }
 
 NTSTATUS DoSyscall(SYSCALL syscall, PVOID args) {
-	return (NTSTATUS)(SIZE_T)NtGdiDdDDIGetSharedResourceAdapterLuid((PVOID)SYSCALL_UNIQUE, (PVOID)syscall, args);
+	SYSCALL_DATA data = { 0 };
+	data.Unique = SYSCALL_UNIQUE;
+	data.Syscall = syscall;
+	data.Arguments = args;
+
+	// NtConvertBetweenAuxiliaryCounterAndPerformanceCounter will dereference this
+	PVOID dataPtr = &data;
+
+	INT64 status = 0;
+	NtConvertBetweenAuxiliaryCounterAndPerformanceCounter((PVOID)1, &dataPtr, &status, 0);
+	return (NTSTATUS)status;
 }

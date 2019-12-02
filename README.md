@@ -1,6 +1,8 @@
-# access
+# access - noseh
 
 A simple syscall wrapper that requires no handles to perform operations with `PROCESS_ALL_ACCESS` privilege.
+
+This branch is the modified version that uses no SEH, but still does safe operations (results in slower execution). This branch also utilizes a different syscall hook for communication via a `.data` section modification in the kernel.
 
 ## Usage
 

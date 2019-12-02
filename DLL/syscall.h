@@ -7,6 +7,12 @@
 #define EncodeHandle(id) (HANDLE)((SIZE_T)id | HANDLE_SIGNATURE)
 #define DecodeHandle(handle) (HANDLE)((SIZE_T)handle & ~HANDLE_SIGNATURE)
 
+typedef struct _SYSCALL_DATA {
+	DWORD Unique;
+	DWORD Syscall;
+	PVOID Arguments;
+} SYSCALL_DATA, *PSYSCALL_DATA;
+
 typedef enum _SYSCALL {
 	/*** Process ***/
 	SyscallNtOpenProcess,

@@ -2,8 +2,8 @@
 
 #define LENGTH(a) (sizeof(a) / sizeof(a[0]))
 
-BOOL TrampolineHook(PVOID dest, PVOID src, PVOID *original);
-BOOL UnTrampolineHook(PVOID src, PVOID original);
+BOOL ProbeUserAddress(PVOID addr, SIZE_T size, ULONG alignment);
+BOOL SafeCopy(PVOID dest, PVOID src, SIZE_T size);
 PCHAR LowerStr(PCHAR str);
 PVOID FindPattern(PCHAR base, DWORD length, PCHAR pattern, PCHAR mask);
 PVOID FindPatternImage(PCHAR base, PCHAR pattern, PCHAR mask);

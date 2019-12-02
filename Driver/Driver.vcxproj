@@ -152,6 +152,7 @@
     <Link>
       <ForceSymbolReferences>
       </ForceSymbolReferences>
+      <EntryPointSymbol>DriverEntry</EntryPointSymbol>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>

@@ -10,15 +10,14 @@
 
 #define printf(fmt, ...) DbgPrint("[dbg] "fmt, ##__VA_ARGS__)
 #define HANDLE_SYSCALL(name, args) \
-    case Syscall##name: {                                      \
-        args safe = { 0 };                                     \
-        try {                                                  \
-            ProbeForRead(buffer, sizeof(args), sizeof(ULONG)); \
-            safe = *(args *)buffer;                            \
-        } except (EXCEPTION_EXECUTE_HANDLER) {                 \
-            return GetExceptionCode();                         \
-        }                                                      \
-        return Core##name(&safe);                              \
+    case Syscall##name: {                                         \
+        args safe = { 0 };                                        \
+        if (!SafeCopy(&safe, safeData.Arguments, sizeof(args))) { \
+            *status = STATUS_ACCESS_VIOLATION;                    \
+            return 0;                                             \
+        }                                                         \
+        *status = Core##name(&safe);                              \
+        return 0;                                                 \
     }
 
 // Important thread info excluding most critical structures
