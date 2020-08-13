@@ -59,6 +59,8 @@ typedef enum _PROCESS_INFORMATION_CLASS {
 	ProcessInformationClassMax
 } PROCESS_INFORMATION_CLASS;
 
+#define MemoryMappedFilenameInformation (2)
+
 typedef struct _SYSTEM_PROCESS_INFORMATION {
 	ULONG NextEntryOffset;
 	ULONG NumberOfThreads;

@@ -3,6 +3,22 @@
 extern NTSTATUS(NTAPI *PsSuspendThread)(PETHREAD Thread, PULONG PreviousSuspendCount);
 extern NTSTATUS(NTAPI *PsResumeThread)(PETHREAD Thread, PULONG PreviousCount);
 
+static VOID AdjustRelativePointers(PBYTE buffer, PBYTE target, SIZE_T size) {
+	if (size < sizeof(PVOID)) {
+		return;
+	}
+
+	for (SIZE_T i = 0; i <= size - sizeof(PVOID); i += sizeof(ULONG)) {
+		PVOID *ptr = (PVOID *)(buffer + i);
+		SIZE_T offset = (PBYTE)*ptr - buffer;
+
+		if (offset < size) {
+			*ptr = target + offset;
+			i += sizeof(ULONG);
+		}
+	}
+}
+
 /*** Process ***/
 INT64 CoreNtOpenProcess(PNTOPENPROCESS_ARGS args) {
 	CLIENT_ID clientId = { 0 };
@@ -99,7 +115,14 @@ INT64 CoreNtQuerySystemInformationEx(PNTQUERYSYSTEMINFORMATIONEX_ARGS args) {
 					KeEnterCriticalRegion();
 					KPROCESSOR_MODE previousMode = KeSetPreviousMode(KernelMode);
 
-					status = NtQuerySystemInformationEx(args->SystemInformationClass, &processHandle, args->InputBufferLength, systemInformation, args->SystemInformationLength, &returnLength);
+					status = NtQuerySystemInformationEx(
+						args->SystemInformationClass,
+						&processHandle,
+						args->InputBufferLength,
+						systemInformation,
+						args->SystemInformationLength,
+						&returnLength
+					);
 
 					KeSetPreviousMode(previousMode);
 					KeLeaveCriticalRegion();
@@ -107,7 +130,7 @@ INT64 CoreNtQuerySystemInformationEx(PNTQUERYSYSTEMINFORMATIONEX_ARGS args) {
 
 					ObDereferenceObject(process);
 
-					if (systemInformation) {
+					if (NT_SUCCESS(status) && systemInformation) {
 						if (!SafeCopy(args->SystemInformation, systemInformation, returnLength)) {
 							status = STATUS_ACCESS_VIOLATION;
 						}
@@ -128,7 +151,14 @@ INT64 CoreNtQuerySystemInformationEx(PNTQUERYSYSTEMINFORMATIONEX_ARGS args) {
 			break;
 	}
 
-	return NtQuerySystemInformationEx(args->SystemInformationClass, args->InputBuffer, args->InputBufferLength, args->SystemInformation, args->SystemInformationLength, args->ReturnLength);
+	return NtQuerySystemInformationEx(
+		args->SystemInformationClass,
+		args->InputBuffer,
+		args->InputBufferLength,
+		args->SystemInformation,
+		args->SystemInformationLength,
+		args->ReturnLength
+	);
 }
 
 INT64 CoreNtQueryInformationProcess(PNTQUERYINFORMATIONPROCESS_ARGS args) {
@@ -162,7 +192,13 @@ INT64 CoreNtQueryInformationProcess(PNTQUERYINFORMATIONPROCESS_ARGS args) {
 		KeEnterCriticalRegion();
 		KPROCESSOR_MODE previousMode = KeSetPreviousMode(KernelMode);
 		
-		status = NtQueryInformationProcess(NtCurrentProcess(), args->ProcessInformationClass, processInformation, args->ProcessInformationLength, &returnLength);
+		status = NtQueryInformationProcess(
+			NtCurrentProcess(),
+			args->ProcessInformationClass,
+			processInformation,
+			args->ProcessInformationLength,
+			&returnLength
+		);
 		
 		KeSetPreviousMode(previousMode);
 		KeLeaveCriticalRegion();
@@ -170,18 +206,8 @@ INT64 CoreNtQueryInformationProcess(PNTQUERYINFORMATIONPROCESS_ARGS args) {
 
 		ObDereferenceObject(process);
 
-		if (processInformation) {
-			// Adjust relative pointers
-			if (returnLength >= sizeof(PVOID)) {
-				for (ULONG i = 0; i <= returnLength - sizeof(PVOID); i += sizeof(ULONG)) {
-					PVOID *ptr = (PVOID *)((PBYTE)processInformation + i);
-					SIZE_T offset = (PBYTE)*ptr - (PBYTE)processInformation;
-
-					if (offset < returnLength) {
-						*ptr = (PBYTE)args->ProcessInformation + offset;
-					}
-				}
-			}
+		if (NT_SUCCESS(status) && processInformation) {
+			AdjustRelativePointers(processInformation, args->ProcessInformation, returnLength);
 
 			if (!SafeCopy(args->ProcessInformation, processInformation, returnLength)) {
 				status = STATUS_ACCESS_VIOLATION;
@@ -223,7 +249,12 @@ INT64 CoreNtSetInformationProcess(PNTSETINFORMATIONPROCESS_ARGS args) {
 				KeEnterCriticalRegion();
 				KPROCESSOR_MODE previousMode = KeSetPreviousMode(KernelMode);
 
-				status = NtSetInformationProcess(NtCurrentProcess(), args->ProcessInformationClass, processInformation, args->ProcessInformationLength);
+				status = NtSetInformationProcess(
+					NtCurrentProcess(),
+					args->ProcessInformationClass,
+					processInformation,
+					args->ProcessInformationLength
+				);
 
 				KeSetPreviousMode(previousMode);
 				KeLeaveCriticalRegion();
@@ -246,13 +277,9 @@ INT64 CoreNtFlushInstructionCache(PNTFLUSHINSTRUCTIONCACHE_ARGS args) {
 	NTSTATUS status = PsLookupProcessByProcessId(DecodeHandle(args->ProcessHandle), &process);
 	if (NT_SUCCESS(status)) {
 		KeAttachProcess((PKPROCESS)process);
-		KeEnterCriticalRegion();
-		KPROCESSOR_MODE previousMode = KeSetPreviousMode(KernelMode);
-		
+
 		status = ZwFlushInstructionCache(NtCurrentProcess(), args->BaseAddress, args->NumberOfBytesToFlush);
 		
-		KeSetPreviousMode(previousMode);
-		KeLeaveCriticalRegion();
 		KeDetachProcess();
 
 		ObDereferenceObject(process);
@@ -281,7 +308,14 @@ INT64 CoreNtAllocateVirtualMemory(PNTALLOCATEVIRTUALMEMORY_ARGS args) {
 		KeEnterCriticalRegion();
 		KPROCESSOR_MODE previousMode = KeSetPreviousMode(KernelMode);
 
-		status = NtAllocateVirtualMemory(NtCurrentProcess(), &baseAddress, args->ZeroBits, &regionSize, args->AllocationType, args->Protect);
+		status = NtAllocateVirtualMemory(
+			NtCurrentProcess(),
+			&baseAddress,
+			args->ZeroBits,
+			&regionSize,
+			args->AllocationType,
+			args->Protect
+		);
 		
 		KeSetPreviousMode(previousMode);
 		KeLeaveCriticalRegion();
@@ -317,13 +351,9 @@ INT64 CoreNtFlushVirtualMemory(PNTFLUSHVIRTUALMEMORY_ARGS args) {
 	NTSTATUS status = PsLookupProcessByProcessId(DecodeHandle(args->ProcessHandle), &process);
 	if (NT_SUCCESS(status)) {
 		KeAttachProcess((PKPROCESS)process);
-		KeEnterCriticalRegion();
-		KPROCESSOR_MODE previousMode = KeSetPreviousMode(KernelMode);
 
 		status = ZwFlushVirtualMemory(NtCurrentProcess(), &baseAddress, &regionSize, &ioStatus);
 		
-		KeSetPreviousMode(previousMode);
-		KeLeaveCriticalRegion();
 		KeDetachProcess();
 
 		ObDereferenceObject(process);
@@ -390,13 +420,9 @@ INT64 CoreNtLockVirtualMemory(PNTLOCKVIRTUALMEMORY_ARGS args) {
 	NTSTATUS status = PsLookupProcessByProcessId(DecodeHandle(args->ProcessHandle), &process);
 	if (NT_SUCCESS(status)) {
 		KeAttachProcess((PKPROCESS)process);
-		KeEnterCriticalRegion();
-		KPROCESSOR_MODE previousMode = KeSetPreviousMode(KernelMode);
-		
+
 		status = ZwLockVirtualMemory(NtCurrentProcess(), &baseAddress, &regionSize, args->LockOption);
 		
-		KeSetPreviousMode(previousMode);
-		KeLeaveCriticalRegion();
 		KeDetachProcess();
 
 		ObDereferenceObject(process);
@@ -426,13 +452,9 @@ INT64 CoreNtUnlockVirtualMemory(PNTUNLOCKVIRTUALMEMORY_ARGS args) {
 	NTSTATUS status = PsLookupProcessByProcessId(DecodeHandle(args->ProcessHandle), &process);
 	if (NT_SUCCESS(status)) {
 		KeAttachProcess((PKPROCESS)process);
-		KeEnterCriticalRegion();
-		KPROCESSOR_MODE previousMode = KeSetPreviousMode(KernelMode);
 
 		status = ZwUnlockVirtualMemory(NtCurrentProcess(), &baseAddress, &regionSize, args->LockOption);
 
-		KeSetPreviousMode(previousMode);
-		KeLeaveCriticalRegion();
 		KeDetachProcess();
 
 		ObDereferenceObject(process);
@@ -466,13 +488,15 @@ INT64 CoreNtProtectVirtualMemory(PNTPROTECTVIRTUALMEMORY_ARGS args) {
 		ULONG oldAccessProtection = 0;
 
 		KeAttachProcess((PKPROCESS)process);
-		KeEnterCriticalRegion();
-		KPROCESSOR_MODE previousMode = KeSetPreviousMode(KernelMode);
+
+		status = ZwProtectVirtualMemory(
+			NtCurrentProcess(),
+			&baseAddress,
+			&regionSize,
+			args->NewAccessProtection,
+			&oldAccessProtection
+		);
 		
-		status = ZwProtectVirtualMemory(NtCurrentProcess(), &baseAddress, &regionSize, args->NewAccessProtection, &oldAccessProtection);
-		
-		KeSetPreviousMode(previousMode);
-		KeLeaveCriticalRegion();
 		KeDetachProcess();
 
 		ObDereferenceObject(process);
@@ -508,7 +532,15 @@ INT64 CoreNtReadVirtualMemory(PNTREADVIRTUALMEMORY_ARGS args) {
 	if (NT_SUCCESS(status)) {
 		if (args->NumberOfBytesToRead) {
 			SIZE_T numberOfBytesRead = 0;
-			status = MmCopyVirtualMemory(process, args->BaseAddress, PsGetCurrentProcess(), args->Buffer, args->NumberOfBytesToRead, ExGetPreviousMode(), &numberOfBytesRead);
+
+			status = MmCopyVirtualMemory(
+				process, args->BaseAddress,
+				PsGetCurrentProcess(),
+				args->Buffer,
+				args->NumberOfBytesToRead,
+				ExGetPreviousMode(),
+				&numberOfBytesRead
+			);
 
 			if (args->NumberOfBytesRead) {
 				if (!SafeCopy(args->NumberOfBytesRead, &numberOfBytesRead, sizeof(numberOfBytesRead))) {
@@ -543,7 +575,16 @@ INT64 CoreNtWriteVirtualMemory(PNTWRITEVIRTUALMEMORY_ARGS args) {
 	if (NT_SUCCESS(status)) {
 		if (args->NumberOfBytesToWrite) {
 			SIZE_T numberOfBytesWritten = 0;
-			status = MmCopyVirtualMemory(PsGetCurrentProcess(), args->Buffer, process, args->BaseAddress, args->NumberOfBytesToWrite, ExGetPreviousMode(), &numberOfBytesWritten);
+
+			status = MmCopyVirtualMemory(
+				PsGetCurrentProcess(),
+				args->Buffer,
+				process,
+				args->BaseAddress,
+				args->NumberOfBytesToWrite,
+				ExGetPreviousMode(),
+				&numberOfBytesWritten
+			);
 
 			if (args->NumberOfBytesWritten) {
 				if (!SafeCopy(args->NumberOfBytesWritten, &numberOfBytesWritten, sizeof(numberOfBytesWritten))) {
@@ -586,18 +627,25 @@ INT64 CoreNtQueryVirtualMemory(PNTQUERYVIRTUALMEMORY_ARGS args) {
 		}
 
 		KeAttachProcess((PKPROCESS)process);
-		KeEnterCriticalRegion();
-		KPROCESSOR_MODE previousMode = KeSetPreviousMode(KernelMode);
 		
-		status = ZwQueryVirtualMemory(NtCurrentProcess(), args->BaseAddress, args->MemoryInformationClass, memoryInformation, args->MemoryInformationLength, &returnLength);
+		status = ZwQueryVirtualMemory(
+			NtCurrentProcess(),
+			args->BaseAddress,
+			args->MemoryInformationClass,
+			memoryInformation,
+			args->MemoryInformationLength,
+			&returnLength
+		);
 		
-		KeSetPreviousMode(previousMode);
-		KeLeaveCriticalRegion();
 		KeDetachProcess();
 
 		ObDereferenceObject(process);
 
-		if (memoryInformation) {
+		if (NT_SUCCESS(status) && memoryInformation) {
+			if (args->MemoryInformationClass == MemoryMappedFilenameInformation) {
+				AdjustRelativePointers(memoryInformation, args->MemoryInformation, returnLength);
+			}
+	
 			if (!SafeCopy(args->MemoryInformation, memoryInformation, returnLength)) {
 				status = STATUS_ACCESS_VIOLATION;
 			}
@@ -683,14 +731,26 @@ INT64 CoreNtQueryInformationThread(PNTQUERYINFORMATIONTHREAD_ARGS args) {
 			memcpy((PBYTE)PsGetCurrentThread() + start, (PBYTE)thread + start, end - start);
 		}
 
-		KPROCESSOR_MODE old = KeSetPreviousMode(KernelMode);
-		status = ZwQueryInformationThread(NtCurrentThread(), args->ThreadInformationClass, args->ThreadInformation, args->ThreadInformationLength, args->ReturnLength);
-		KeSetPreviousMode(old);
+		status = ZwQueryInformationThread(
+			NtCurrentThread(),
+			args->ThreadInformationClass,
+			args->ThreadInformation,
+			args->ThreadInformationLength,
+			args->ReturnLength
+		);
 
 		// Manually copy TEB if requested
-		if (NT_SUCCESS(status) && args->ThreadInformationClass == ThreadBasicInformation && args->ThreadInformation && args->ThreadInformationLength) {
+		if (NT_SUCCESS(status) && 
+			args->ThreadInformationClass == ThreadBasicInformation &&
+			args->ThreadInformation &&
+			args->ThreadInformationLength
+		) {
 			PVOID tebBaseAddress = PsGetThreadTeb(thread);
-			if (!SafeCopy(&((PTHREAD_BASIC_INFORMATION)args->ThreadInformation)->TebBaseAddress, &tebBaseAddress, sizeof(tebBaseAddress))) {
+			if (!SafeCopy(
+				&((PTHREAD_BASIC_INFORMATION)args->ThreadInformation)->TebBaseAddress,
+				&tebBaseAddress,
+				sizeof(tebBaseAddress)
+			)) {
 				status = STATUS_ACCESS_VIOLATION;
 			}
 		}
@@ -759,10 +819,13 @@ INT64 CoreNtSetInformationThread(PNTSETINFORMATIONTHREAD_ARGS args) {
 						memcpy((PBYTE)PsGetCurrentThread() + start, (PBYTE)thread + start, end - start);
 					}
 
-					KPROCESSOR_MODE old = KeSetPreviousMode(KernelMode);
-					status = ZwSetInformationThread(NtCurrentThread(), args->ThreadInformationClass, args->ThreadInformation, args->ThreadInformationLength);
-					KeSetPreviousMode(old);
-					
+					status = ZwSetInformationThread(
+						NtCurrentThread(),
+						args->ThreadInformationClass,
+						args->ThreadInformation,
+						args->ThreadInformationLength
+					);
+
 					for (ULONG i = 0; i < LENGTH(THREAD_INFO_SECTIONS); i += 2) {
 						ULONG start = THREAD_INFO_SECTIONS[i];
 						ULONG end = THREAD_INFO_SECTIONS[i + 1];
