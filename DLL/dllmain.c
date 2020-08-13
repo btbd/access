@@ -13,7 +13,7 @@ NTSTATUS NTAPI NtOpenProcessHook(PHANDLE processHandle, ACCESS_MASK desiredAcces
 		return NtOpenProcess(processHandle, desiredAccess, objectAttributes, clientId);
 	}
 
-	NTOPENPROCESS_ARGS args = { 0 };
+	NTOPENPROCESS_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.DesiredAccess = desiredAccess;
 	args.ObjectAttributes = objectAttributes;
@@ -27,7 +27,7 @@ NTSTATUS NTAPI NtSuspendProcessHook(HANDLE processHandle) {
 		return NtSuspendProcess(processHandle);
 	}
 
-	NTSUSPENDPROCESS_ARGS args = { 0 };
+	NTSUSPENDPROCESS_ARGS args;
 	args.ProcessHandle = processHandle;
 	return DoSyscall(SyscallNtSuspendProcess, &args);
 }
@@ -38,7 +38,7 @@ NTSTATUS NTAPI NtResumeProcessHook(HANDLE processHandle) {
 		return NtSuspendProcess(processHandle);
 	}
 
-	NTRESUMEPROCESS_ARGS args = { 0 };
+	NTRESUMEPROCESS_ARGS args;
 	args.ProcessHandle = processHandle;
 	return DoSyscall(SyscallNtResumeProcess, &args);
 }
@@ -48,7 +48,7 @@ NTSTATUS NTAPI NtQuerySystemInformationExHook(SYSTEM_INFORMATION_CLASS systemInf
 	switch (systemInformationClass) {
 		case SystemSupportedProcessArchitectures:
 			if (inputBuffer && inputBufferLength >= sizeof(HANDLE) && IsValidHandle(*(PHANDLE)inputBuffer)) {
-				NTQUERYSYSTEMINFORMATIONEX_ARGS args = { 0 };
+				NTQUERYSYSTEMINFORMATIONEX_ARGS args;
 				args.SystemInformationClass = systemInformationClass;
 				args.InputBuffer = inputBuffer;
 				args.InputBufferLength = inputBufferLength;
@@ -70,7 +70,7 @@ NTSTATUS NTAPI NtQueryInformationProcessHook(HANDLE processHandle, PROCESSINFOCL
 		return NtQueryInformationProcess(processHandle, processInformationClass, processInformation, processInformationLength, returnLength);
 	}
 	
-	NTQUERYINFORMATIONPROCESS_ARGS args = { 0 };
+	NTQUERYINFORMATIONPROCESS_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.ProcessInformationClass = processInformationClass;
 	args.ProcessInformation = processInformation;
@@ -85,7 +85,7 @@ NTSTATUS NTAPI NtSetInformationProcessHook(HANDLE processHandle, PROCESSINFOCLAS
 		return NtSetInformationProcess(processHandle, processInformationClass, processInformation, processInformationLength);
 	}
 
-	NTQUERYINFORMATIONPROCESS_ARGS args = { 0 };
+	NTQUERYINFORMATIONPROCESS_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.ProcessInformationClass = processInformationClass;
 	args.ProcessInformation = processInformation;
@@ -99,7 +99,7 @@ NTSTATUS NTAPI NtFlushInstructionCacheHook(HANDLE processHandle, PVOID baseAddre
 		return NtFlushInstructionCache(processHandle, baseAddress, numberOfBytesToFlush);
 	}
 	
-	NTFLUSHINSTRUCTIONCACHE_ARGS args = { 0 };
+	NTFLUSHINSTRUCTIONCACHE_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.BaseAddress = baseAddress;
 	args.NumberOfBytesToFlush = numberOfBytesToFlush;
@@ -122,7 +122,7 @@ NTSTATUS NTAPI NtAllocateVirtualMemoryHook(HANDLE processHandle, PVOID *baseAddr
 		return NtAllocateVirtualMemory(processHandle, baseAddress, zeroBits, regionSize, allocationType, protect);
 	}
 
-	NTALLOCATEVIRTUALMEMORY_ARGS args = { 0 };
+	NTALLOCATEVIRTUALMEMORY_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.BaseAddress = baseAddress;
 	args.ZeroBits = zeroBits;
@@ -138,7 +138,7 @@ NTSTATUS NTAPI NtFlushVirtualMemoryHook(HANDLE processHandle, PVOID *baseAddress
 		return NtFlushVirtualMemory(processHandle, baseAddress, regionSize, ioStatus);
 	}
 
-	NTFLUSHVIRTUALMEMORY_ARGS args = { 0 };
+	NTFLUSHVIRTUALMEMORY_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.BaseAddress = baseAddress;
 	args.RegionSize = regionSize;
@@ -152,7 +152,7 @@ NTSTATUS NTAPI NtFreeVirtualMemoryHook(HANDLE processHandle, PVOID *baseAddress,
 		return NtFreeVirtualMemory(processHandle, baseAddress, regionSize, freeType);
 	}
 
-	NTFREEVIRTUALMEMORY_ARGS args = { 0 };
+	NTFREEVIRTUALMEMORY_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.BaseAddress = baseAddress;
 	args.RegionSize = regionSize;
@@ -166,7 +166,7 @@ NTSTATUS NTAPI NtLockVirtualMemoryHook(HANDLE processHandle, PVOID *baseAddress,
 		return NtLockVirtualMemory(processHandle, baseAddress, regionSize, lockOption);
 	}
 
-	NTLOCKVIRTUALMEMORY_ARGS args = { 0 };
+	NTLOCKVIRTUALMEMORY_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.BaseAddress = baseAddress;
 	args.RegionSize = regionSize;
@@ -180,7 +180,7 @@ NTSTATUS NTAPI NtUnlockVirtualMemoryHook(HANDLE processHandle, PVOID *baseAddres
 		return NtLockVirtualMemory(processHandle, baseAddress, regionSize, lockOption);
 	}
 
-	NTUNLOCKVIRTUALMEMORY_ARGS args = { 0 };
+	NTUNLOCKVIRTUALMEMORY_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.BaseAddress = baseAddress;
 	args.RegionSize = regionSize;
@@ -194,7 +194,7 @@ NTSTATUS NTAPI NtProtectVirtualMemoryHook(HANDLE processHandle, PVOID *baseAddre
 		return NtProtectVirtualMemory(processHandle, baseAddress, regionSize, newAccessProtection, oldAccessProtection);
 	}
 
-	NTPROTECTVIRTUALMEMORY_ARGS args = { 0 };
+	NTPROTECTVIRTUALMEMORY_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.BaseAddress = baseAddress;
 	args.RegionSize = regionSize;
@@ -209,7 +209,7 @@ NTSTATUS NTAPI NtReadVirtualMemoryHook(HANDLE processHandle, PVOID baseAddress, 
 		return NtReadVirtualMemory(processHandle, baseAddress, buffer, numberOfBytesToRead, numberOfBytesRead);
 	}
 
-	NTREADVIRTUALMEMORY_ARGS args = { 0 };
+	NTREADVIRTUALMEMORY_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.BaseAddress = baseAddress;
 	args.Buffer = buffer;
@@ -224,7 +224,7 @@ NTSTATUS NTAPI NtWriteVirtualMemoryHook(HANDLE processHandle, PVOID baseAddress,
 		return NtWriteVirtualMemory(processHandle, baseAddress, buffer, numberOfBytesToWrite, numberOfBytesWritten);
 	}
 
-	NTWRITEVIRTUALMEMORY_ARGS args = { 0 };
+	NTWRITEVIRTUALMEMORY_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.BaseAddress = baseAddress;
 	args.Buffer = buffer;
@@ -239,7 +239,7 @@ NTSTATUS NTAPI NtQueryVirtualMemoryHook(HANDLE processHandle, PVOID baseAddress,
 		return NtQueryVirtualMemory(processHandle, baseAddress, memoryInformationClass, memoryInformation, memoryInformationLength, returnLength);
 	}
 
-	NTQUERYVIRTUALMEMORY_ARGS args = { 0 };
+	NTQUERYVIRTUALMEMORY_ARGS args;
 	args.ProcessHandle = processHandle;
 	args.BaseAddress = baseAddress;
 	args.MemoryInformationClass = memoryInformationClass;
@@ -256,7 +256,7 @@ NTSTATUS NTAPI NtOpenThreadHook(PHANDLE threadHandle, ACCESS_MASK accessMask, PO
 		return NtOpenThread(threadHandle, accessMask, objectAttributes, clientId);
 	}
 	
-	NTOPENTHREAD_ARGS args = { 0 };
+	NTOPENTHREAD_ARGS args;
 	args.ThreadHandle = threadHandle;
 	args.AccessMask = accessMask;
 	args.ObjectAttributes = objectAttributes;
@@ -270,7 +270,7 @@ NTSTATUS NTAPI NtQueryInformationThreadHook(HANDLE threadHandle, THREADINFOCLASS
 		return NtQueryInformationThread(threadHandle, threadInformationClass, threadInformation, threadInformationLength, returnLength);
 	}
 
-	NTQUERYINFORMATIONTHREAD_ARGS args = { 0 };
+	NTQUERYINFORMATIONTHREAD_ARGS args;
 	args.ThreadHandle = threadHandle;
 	args.ThreadInformationClass = threadInformationClass;
 	args.ThreadInformation = threadInformation;
@@ -285,7 +285,7 @@ NTSTATUS NTAPI NtSetInformationThreadHook(HANDLE threadHandle, THREADINFOCLASS t
 		return NtSetInformationThread(threadHandle, threadInformationClass, threadInformation, threadInformationLength);
 	}
 
-	NTSETINFORMATIONTHREAD_ARGS args = { 0 };
+	NTSETINFORMATIONTHREAD_ARGS args;
 	args.ThreadHandle = threadHandle;
 	args.ThreadInformationClass = threadInformationClass;
 	args.ThreadInformation = threadInformation;
@@ -299,7 +299,7 @@ NTSTATUS NTAPI NtGetContextThreadHook(HANDLE threadHandle, PCONTEXT context) {
 		return NtGetContextThread(threadHandle, context);
 	}
 
-	NTGETCONTEXTTHREAD_ARGS args = { 0 };
+	NTGETCONTEXTTHREAD_ARGS args;
 	args.ThreadHandle = threadHandle;
 	args.Context = context;
 	return DoSyscall(SyscallNtGetContextThread, &args);
@@ -311,7 +311,7 @@ NTSTATUS NTAPI NtSetContextThreadHook(HANDLE threadHandle, PCONTEXT context) {
 		return NtSetContextThread(threadHandle, context);
 	}
 
-	NTSETCONTEXTTHREAD_ARGS args = { 0 };
+	NTSETCONTEXTTHREAD_ARGS args;
 	args.ThreadHandle = threadHandle;
 	args.Context = context;
 	return DoSyscall(SyscallNtSetContextThread, &args);
@@ -323,7 +323,7 @@ NTSTATUS NTAPI NtResumeThreadHook(HANDLE threadHandle, PULONG suspendCount) {
 		return NtResumeThread(threadHandle, suspendCount);
 	}
 
-	NTRESUMETHREAD_ARGS args = { 0 };
+	NTRESUMETHREAD_ARGS args;
 	args.ThreadHandle = threadHandle;
 	args.SuspendCount = suspendCount;
 	return DoSyscall(SyscallNtResumeThread, &args);
@@ -335,7 +335,7 @@ NTSTATUS NTAPI NtSuspendThreadHook(HANDLE threadHandle, PULONG previousSuspendCo
 		return NtResumeThread(threadHandle, previousSuspendCount);
 	}
 
-	NTSUSPENDTHREAD_ARGS args = { 0 };
+	NTSUSPENDTHREAD_ARGS args;
 	args.ThreadHandle = threadHandle;
 	args.PreviousSuspendCount = previousSuspendCount;
 	return DoSyscall(SyscallNtSuspendThread, &args);
@@ -348,7 +348,7 @@ NTSTATUS NTAPI NtWaitForSingleObjectHook(HANDLE handle, BOOLEAN alertable, PLARG
 		return NtWaitForSingleObject(handle, alertable, timeout);
 	}
 
-	NTWAITFORSINGLEOBJECT_ARGS args = { 0 };
+	NTWAITFORSINGLEOBJECT_ARGS args;
 	args.Handle = handle;
 	args.Alertable = alertable;
 	args.Timeout = timeout;
