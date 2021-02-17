@@ -48,7 +48,7 @@ BOOL TrampolineHook(PVOID dest, PVOID src, PVOID *original) {
 	}
 
 	BYTE jmp[] = { 0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, };
-	PVOID copy = ExAllocatePool(NonPagedPool, length + sizeof(jmp));
+	PVOID copy = ExAllocatePool2(POOL_FLAG_NON_PAGED, length + sizeof(jmp), 'HT');
 	if (copy) {
 		memcpy(copy, src, length);
 		*(PVOID *)&jmp[6] = (PBYTE)src + length;
@@ -186,7 +186,7 @@ PVOID GetBaseAddress(PCHAR name, PULONG outSize) {
 		return addr;
 	}
 
-	PSYSTEM_MODULE_INFORMATION modules = ExAllocatePool(NonPagedPool, size);
+	PSYSTEM_MODULE_INFORMATION modules = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, 'ABG');
 	if (!modules) {
 		printf("! failed to allocate %d bytes for modules !\n", size);
 		return addr;
