@@ -104,7 +104,7 @@ INT64 CoreNtQuerySystemInformationEx(PNTQUERYSYSTEMINFORMATIONEX_ARGS args) {
 					ULONG returnLength = 0;
 
 					if (args->SystemInformation && args->SystemInformationLength) {
-						systemInformation = ExAllocatePool(NonPagedPool, args->SystemInformationLength);
+						systemInformation = ExAllocatePool2(POOL_FLAG_NON_PAGED, args->SystemInformationLength, 'ISQ');
 						if (!systemInformation) {
 							ObDereferenceObject(process);
 							return STATUS_INSUFFICIENT_RESOURCES;
@@ -181,7 +181,7 @@ INT64 CoreNtQueryInformationProcess(PNTQUERYINFORMATIONPROCESS_ARGS args) {
 		ULONG returnLength = 0;
 
 		if (args->ProcessInformation && args->ProcessInformationLength) {
-			processInformation = ExAllocatePool(NonPagedPool, args->ProcessInformationLength);
+			processInformation = ExAllocatePool2(POOL_FLAG_NON_PAGED, args->ProcessInformationLength, 'PIQ');
 			if (!processInformation) {
 				ObDereferenceObject(process);
 				return STATUS_INSUFFICIENT_RESOURCES;
@@ -238,7 +238,7 @@ INT64 CoreNtSetInformationProcess(PNTSETINFORMATIONPROCESS_ARGS args) {
 	PEPROCESS process = 0;
 	NTSTATUS status = PsLookupProcessByProcessId(DecodeHandle(args->ProcessHandle), &process);
 	if (NT_SUCCESS(status)) {
-		PVOID processInformation = ExAllocatePool(NonPagedPool, args->ProcessInformationLength);
+		PVOID processInformation = ExAllocatePool2(POOL_FLAG_NON_PAGED, args->ProcessInformationLength, 'PIS');
 		if (processInformation) {
 			if (!SafeCopy(processInformation, args->ProcessInformation, args->ProcessInformationLength)) {
 				status = STATUS_ACCESS_VIOLATION;
@@ -619,7 +619,7 @@ INT64 CoreNtQueryVirtualMemory(PNTQUERYVIRTUALMEMORY_ARGS args) {
 		SIZE_T returnLength = 0;
 
 		if (args->MemoryInformation && args->MemoryInformationLength) {
-			memoryInformation = ExAllocatePool(NonPagedPool, args->MemoryInformationLength);
+			memoryInformation = ExAllocatePool2(POOL_FLAG_NON_PAGED, args->MemoryInformationLength, 'MVQ');
 			if (!memoryInformation) {
 				ObDereferenceObject(process);
 				return STATUS_INSUFFICIENT_RESOURCES;
